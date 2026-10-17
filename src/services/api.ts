@@ -15,6 +15,7 @@ import {
   ApiError,
   DeviceStatus,
   AlertSeverity,
+  RideStatus,
 } from '@/types';
 import {
   generateDemoDevices,
@@ -27,6 +28,7 @@ import {
   simulatePositionUpdate,
 } from './demoData';
 import { useAuthStore } from '@/store';
+import * as traccarApi from './traccar';
 
 // Demo mode is enabled by default - set NEXT_PUBLIC_DEMO_MODE=false to disable
 const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE !== 'false';
@@ -233,6 +235,56 @@ function generateFilteredDashboardStats(devices: Device[], alerts: Alert[]): Das
   };
 }
 
+// ============ Traccar mode helpers ============
+// The Traccar server already limits every request to the user's own devices and groups,
+// so these only apply the filters chosen on screen.
+
+function applyDeviceFilter(devices: Device[], filter?: DeviceFilter): Device[] {
+  let result = devices;
+  if (filter?.search) {
+    const search = filter.search.toLowerCase();
+    result = result.filter(d =>
+      d.name.toLowerCase().includes(search) ||
+      d.imei.toLowerCase().includes(search) ||
+      d.attributes?.licensePlate?.toLowerCase().includes(search)
+    );
+  }
+  if (filter?.status) result = result.filter(d => d.status === filter.status);
+  if (filter?.groupId) result = result.filter(d => d.groupId === filter.groupId);
+  if (filter?.type) result = result.filter(d => d.type === filter.type);
+  return result;
+}
+
+const rangeOf = (startDate?: string, endDate?: string) => ({
+  from: startDate ? new Date(startDate) : traccarApi.defaultRange.from(),
+  to: endDate ? new Date(endDate) : traccarApi.defaultRange.to(),
+});
+
+async function fetchRides(filter?: RideFilter): Promise<Ride[]> {
+  // Traccar reports only finished trips, so "in progress" filters return nothing
+  if (filter?.status === RideStatus.IN_PROGRESS) return [];
+  const devices = await traccarApi.fetchDevices();
+  const deviceIds = devices
+    .filter(d => !filter?.deviceId || d.id === filter.deviceId)
+    .filter(d => !filter?.groupId || d.groupId === filter.groupId)
+    .map(d => d.id);
+  const { from, to } = rangeOf(filter?.startDate, filter?.endDate);
+  const imeis = new Map(devices.map(d => [d.id, d.imei]));
+  const trips = await traccarApi.fetchTrips(deviceIds, from, to);
+  return trips
+    .map(trip => traccarApi.toRide(trip, imeis.get(String(trip.deviceId))))
+    .sort((a, b) => Date.parse(b.startTime) - Date.parse(a.startTime));
+}
+
+async function fetchAlertList(filter?: AlertFilter): Promise<Alert[]> {
+  const { from, to } = rangeOf(filter?.startDate, filter?.endDate);
+  let alerts = await traccarApi.fetchAlerts(from, to, filter?.deviceId);
+  if (filter?.type) alerts = alerts.filter(a => a.type === filter.type);
+  if (filter?.severity) alerts = alerts.filter(a => a.severity === filter.severity);
+  if (filter?.isRead !== undefined) alerts = alerts.filter(a => a.isRead === filter.isRead);
+  return alerts;
+}
+
 // ============ API Functions ============
 
 // Auth
@@ -242,8 +294,7 @@ export const authApi = {
       await delay(300);
       return generateDemoUser();
     }
-    const response = await apiClient.get('/api/users/me');
-    return response.data;
+    return traccarApi.currentUser();
   },
 
   logout: async (): Promise<void> => {
@@ -251,8 +302,8 @@ export const authApi = {
       localStorage.removeItem('access_token');
       return;
     }
-    await apiClient.post('/api/auth/logout');
-    localStorage.removeItem('access_token');
+    await traccarApi.session.logout();
+    traccarApi.disconnect();
   },
 };
 
@@ -263,8 +314,7 @@ export const dashboardApi = {
       await delay(300);
       return generateFilteredDashboardStats(getDemoDevices(), getDemoAlerts());
     }
-    const response = await apiClient.get('/api/dashboard/stats');
-    return response.data;
+    return traccarApi.fetchStats();
   },
 };
 
@@ -297,8 +347,7 @@ export const devicesApi = {
       
       return devices;
     }
-    const response = await apiClient.get('/api/devices', { params: filter });
-    return response.data;
+    return applyDeviceFilter(await traccarApi.fetchDevices(), filter);
   },
 
   getById: async (id: string): Promise<Device> => {
@@ -308,8 +357,9 @@ export const devicesApi = {
       if (!device) throw new Error('Device not found');
       return device;
     }
-    const response = await apiClient.get(`/api/devices/${id}`);
-    return response.data;
+    const device = (await traccarApi.fetchDevices()).find((d) => d.id === id);
+    if (!device) throw new Error('Device not found');
+    return device;
   },
 
   getPositions: async (deviceId: string, from?: string, to?: string): Promise<Position[]> => {
@@ -327,10 +377,7 @@ export const devicesApi = {
       }
       return positions.reverse();
     }
-    const response = await apiClient.get(`/api/devices/${deviceId}/positions`, {
-      params: { from, to },
-    });
-    return response.data;
+    return traccarApi.fetchPositions(deviceId, from, to);
   },
 
   create: async (device: Partial<Device>): Promise<Device> => {
@@ -345,8 +392,8 @@ export const devicesApi = {
       demoDevices = [...getDemoDevices(), newDevice];
       return newDevice;
     }
-    const response = await apiClient.post('/api/devices', device);
-    return response.data;
+    const response = await traccarApi.traccar.post('/api/devices', traccarApi.fromDevice(device));
+    return traccarApi.toDevice(response.data);
   },
 
   update: async (id: string, device: Partial<Device>): Promise<Device> => {
@@ -358,8 +405,9 @@ export const devicesApi = {
       demoDevices![index] = updated;
       return updated;
     }
-    const response = await apiClient.put(`/api/devices/${id}`, device);
-    return response.data;
+    const existing = (await traccarApi.traccar.get(`/api/devices/${id}`)).data;
+    const response = await traccarApi.traccar.put(`/api/devices/${id}`, traccarApi.fromDevice(device, existing));
+    return traccarApi.toDevice(response.data);
   },
 
   delete: async (id: string): Promise<void> => {
@@ -368,7 +416,7 @@ export const devicesApi = {
       demoDevices = getDemoDevices().filter(d => d.id !== id);
       return;
     }
-    await apiClient.delete(`/api/devices/${id}`);
+    await traccarApi.traccar.delete(`/api/devices/${id}`);
   },
 };
 
@@ -396,8 +444,7 @@ export const ridesApi = {
       
       return rides;
     }
-    const response = await apiClient.get('/api/rides', { params: filter });
-    return response.data;
+    return fetchRides(filter);
   },
 
   getById: async (id: string): Promise<Ride> => {
@@ -407,8 +454,7 @@ export const ridesApi = {
       if (!ride) throw new Error('Ride not found');
       return ride;
     }
-    const response = await apiClient.get(`/api/rides/${id}`);
-    return response.data;
+    return traccarApi.fetchRide(id);
   },
 };
 
@@ -419,8 +465,8 @@ export const geofencesApi = {
       await delay(300);
       return getDemoGeofences();
     }
-    const response = await apiClient.get('/api/geofences');
-    return response.data;
+    const response = await traccarApi.traccar.get('/api/geofences');
+    return response.data.map(traccarApi.toGeofence);
   },
 
   getById: async (id: string): Promise<Geofence> => {
@@ -430,8 +476,8 @@ export const geofencesApi = {
       if (!geofence) throw new Error('Geofence not found');
       return geofence;
     }
-    const response = await apiClient.get(`/api/geofences/${id}`);
-    return response.data;
+    const response = await traccarApi.traccar.get(`/api/geofences/${id}`);
+    return traccarApi.toGeofence(response.data);
   },
 
   create: async (geofence: Partial<Geofence>): Promise<Geofence> => {
@@ -445,8 +491,8 @@ export const geofencesApi = {
       demoGeofences = [...getDemoGeofences(), newGeofence];
       return newGeofence;
     }
-    const response = await apiClient.post('/api/geofences', geofence);
-    return response.data;
+    const response = await traccarApi.traccar.post('/api/geofences', traccarApi.fromGeofence(geofence));
+    return traccarApi.toGeofence(response.data);
   },
 
   update: async (id: string, geofence: Partial<Geofence>): Promise<Geofence> => {
@@ -458,8 +504,9 @@ export const geofencesApi = {
       demoGeofences![index] = updated;
       return updated;
     }
-    const response = await apiClient.put(`/api/geofences/${id}`, geofence);
-    return response.data;
+    const existing = (await traccarApi.traccar.get(`/api/geofences/${id}`)).data;
+    const response = await traccarApi.traccar.put(`/api/geofences/${id}`, traccarApi.fromGeofence(geofence, existing));
+    return traccarApi.toGeofence(response.data);
   },
 
   delete: async (id: string): Promise<void> => {
@@ -468,7 +515,7 @@ export const geofencesApi = {
       demoGeofences = getDemoGeofences().filter(g => g.id !== id);
       return;
     }
-    await apiClient.delete(`/api/geofences/${id}`);
+    await traccarApi.traccar.delete(`/api/geofences/${id}`);
   },
 };
 
@@ -496,8 +543,7 @@ export const alertsApi = {
       
       return alerts;
     }
-    const response = await apiClient.get('/api/alerts', { params: filter });
-    return response.data;
+    return fetchAlertList(filter);
   },
 
   markAsRead: async (id: string): Promise<void> => {
@@ -507,7 +553,7 @@ export const alertsApi = {
       if (alert) alert.isRead = true;
       return;
     }
-    await apiClient.put(`/api/alerts/${id}/read`);
+    traccarApi.markRead(id);
   },
 
   markAllAsRead: async (): Promise<void> => {
@@ -516,7 +562,7 @@ export const alertsApi = {
       getDemoAlerts().forEach(a => a.isRead = true);
       return;
     }
-    await apiClient.put('/api/alerts/read-all');
+    traccarApi.markAllRead();
   },
 };
 
@@ -527,8 +573,8 @@ export const groupsApi = {
       await delay(300);
       return filterGroupsByRole(getDemoGroups());
     }
-    const response = await apiClient.get('/api/groups');
-    return response.data;
+    const response = await traccarApi.traccar.get('/api/groups');
+    return response.data.map(traccarApi.toGroup);
   },
 
   getById: async (id: string): Promise<Group> => {
@@ -538,8 +584,8 @@ export const groupsApi = {
       if (!group) throw new Error('Group not found');
       return group;
     }
-    const response = await apiClient.get(`/api/groups/${id}`);
-    return response.data;
+    const response = await traccarApi.traccar.get(`/api/groups/${id}`);
+    return traccarApi.toGroup(response.data);
   },
 
   create: async (group: Partial<Group>): Promise<Group> => {
@@ -553,8 +599,8 @@ export const groupsApi = {
       demoGroups = [...getDemoGroups(), newGroup];
       return newGroup;
     }
-    const response = await apiClient.post('/api/groups', group);
-    return response.data;
+    const response = await traccarApi.traccar.post('/api/groups', traccarApi.fromGroup(group));
+    return traccarApi.toGroup(response.data);
   },
 
   update: async (id: string, group: Partial<Group>): Promise<Group> => {
@@ -566,8 +612,9 @@ export const groupsApi = {
       demoGroups![index] = updated;
       return updated;
     }
-    const response = await apiClient.put(`/api/groups/${id}`, group);
-    return response.data;
+    const existing = (await traccarApi.traccar.get(`/api/groups/${id}`)).data;
+    const response = await traccarApi.traccar.put(`/api/groups/${id}`, traccarApi.fromGroup(group, existing));
+    return traccarApi.toGroup(response.data);
   },
 
   delete: async (id: string): Promise<void> => {
@@ -576,7 +623,7 @@ export const groupsApi = {
       demoGroups = getDemoGroups().filter(g => g.id !== id);
       return;
     }
-    await apiClient.delete(`/api/groups/${id}`);
+    await traccarApi.traccar.delete(`/api/groups/${id}`);
   },
 };
 
@@ -603,15 +650,35 @@ export const realtimeApi = {
       return () => clearInterval(interval);
     }
     
-    // Real WebSocket connection
-    const ws = new WebSocket(`${process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080'}/ws/positions`);
-    
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      callback(new Map(Object.entries(data)));
-    };
-    
-    return () => ws.close();
+    // Traccar pushes new positions over its WebSocket
+    return traccarApi.subscribe((message) => {
+      if (!message.positions?.length) return;
+      const positions = new Map<string, Position>();
+      message.positions.forEach((position) => {
+        positions.set(String(position.deviceId), traccarApi.toPosition(position));
+      });
+      callback(positions);
+    });
+  },
+
+  // Online/offline changes (demo devices never change)
+  subscribeToDeviceStatus: (callback: (online: Map<string, boolean>) => void): (() => void) => {
+    if (isDemoMode) return () => {};
+    return traccarApi.subscribe((message) => {
+      if (!message.devices?.length) return;
+      callback(new Map(message.devices.map((d) => [String(d.id), d.status === 'online'])));
+    });
+  },
+
+  // New alerts as they happen, like the Traccar web app
+  subscribeToAlerts: (callback: (alerts: Alert[]) => void): (() => void) => {
+    if (isDemoMode) return () => {};
+    return traccarApi.subscribe(async (message) => {
+      const events = (message.events || []).filter((e) => traccarApi.ALERT_EVENT_TYPES.includes(e.type));
+      if (!events.length) return;
+      const names = await traccarApi.lookups();
+      callback(events.map((event) => traccarApi.toAlert(event, names.devices, names.geofences)));
+    });
   },
 };
 

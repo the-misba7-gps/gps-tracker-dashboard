@@ -51,10 +51,6 @@
   background: #1e293b;
 }
 
-.dark .leaflet-tile-pane {
-  filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9);
-}
-
 .dark .leaflet-popup-content-wrapper {
   @apply bg-dark-card text-dark-text;
 }

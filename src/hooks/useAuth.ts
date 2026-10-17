@@ -4,6 +4,11 @@ import { useEffect, useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store';
 import { authApi } from '@/services/api';
+import { session as traccarSession } from '@/services/traccar';
+import { User } from '@/types';
+
+// Drivers have no dashboard page: they start on live tracking
+export const homePathFor = (role?: User['role']) => (role === 'DRIVER' ? '/tracking' : '/dashboard');
 
 // Check if we're in demo mode
 const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE !== 'false';
@@ -45,27 +50,29 @@ export function useAuth() {
       return;
     }
 
-    const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
-    if (!token) {
-      setUser(null);
-      setInitialized(true);
-      return;
-    }
-
+    // Traccar keeps the session in a cookie: ask the server who is logged in
     try {
       const fetchedUser = await authApi.getCurrentUser();
       setUser(fetchedUser);
     } catch {
-      localStorage.removeItem('access_token');
       setUser(null);
     }
     setInitialized(true);
   }, [setUser, setLoading]);
 
-  const login = useCallback(() => {
+  const login = useCallback(async (email?: string, password?: string) => {
     // Demo mode - auto login
     if (isDemoMode) {
-      checkAuth().then(() => router.push('/'));
+      checkAuth().then(() => router.push('/dashboard'));
+      return;
+    }
+
+    // Traccar email and password login
+    if (email && password) {
+      await traccarSession.login(email, password);
+      const fetchedUser = await authApi.getCurrentUser();
+      setUser(fetchedUser);
+      router.push(homePathFor(fetchedUser.role));
       return;
     }
 
@@ -124,7 +131,7 @@ export function useAuth() {
     sessionStorage.removeItem('code_verifier');
 
     await checkAuth();
-    router.push('/');
+    router.push('/dashboard');
   }, [router, checkAuth]);
 
   const logout = useCallback(async () => {

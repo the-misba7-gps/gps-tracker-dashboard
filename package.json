@@ -6,16 +6,20 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postinstall": "node -e \"require('fs').mkdirSync('public',{recursive:true});require('fs').copyFileSync('node_modules/@mapbox/mapbox-gl-rtl-text/dist/mapbox-gl-rtl-text.js','public/mapbox-gl-rtl-text.js')\""
   },
   "dependencies": {
     "@headlessui/react": "^1.7.18",
     "@heroicons/react": "^2.1.1",
+    "@mapbox/mapbox-gl-rtl-text": "^0.4.0",
+    "@maplibre/maplibre-gl-leaflet": "^0.1.4",
     "axios": "^1.6.7",
     "chart.js": "^4.4.1",
     "clsx": "^2.1.0",
     "date-fns": "^3.3.1",
     "leaflet": "^1.9.4",
+    "maplibre-gl": "^5.24.0",
     "next": "^16.1.6",
     "react": "^18.3.1",
     "react-chartjs-2": "^5.2.0",

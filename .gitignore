@@ -37,3 +37,4 @@ next-env.d.ts
 .idea
 .vscode
 /nul
+public/mapbox-gl-rtl-text.js

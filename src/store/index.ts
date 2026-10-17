@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { User, Device, Position, Alert, DashboardStats, Geofence } from '@/types';
+import { User, Device, DeviceStatus, Position, Alert, DashboardStats, Geofence } from '@/types';
+import { statusOf } from '@/services/traccar';
 
 // Auth Store
 interface AuthState {
@@ -41,6 +42,7 @@ interface DeviceState {
   setSelectedDevice: (device: Device | null) => void;
   updatePosition: (deviceId: string, position: Position) => void;
   updatePositions: (positions: Map<string, Position>) => void;
+  setOnline: (online: Map<string, boolean>) => void;
   setLoading: (loading: boolean) => void;
 }
 
@@ -70,15 +72,26 @@ export const useDeviceStore = create<DeviceState>()((set, get) => ({
       positions.set(deviceId, position);
     });
     
+    // A fresh position means the device is online; its state follows the position
     const devices = get().devices.map(device => {
       const position = newPositions.get(device.id);
       if (position) {
-        return { ...device, lastPosition: position };
+        return { ...device, lastPosition: position, status: statusOf(true, position) };
       }
       return device;
     });
     
     set({ positions, devices });
+  },
+  setOnline: (online) => {
+    const devices = get().devices.map(device => {
+      if (!online.has(device.id)) return device;
+      const status = online.get(device.id)
+        ? statusOf(true, device.lastPosition)
+        : DeviceStatus.OFFLINE;
+      return { ...device, status };
+    });
+    set({ devices });
   },
   setLoading: (isLoading) => set({ isLoading }),
 }));

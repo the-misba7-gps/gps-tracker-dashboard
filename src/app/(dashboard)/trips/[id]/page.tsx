@@ -32,8 +32,9 @@ export default function TripDetailsPage() {
         try {
            data = await ridesApi.getById(id);
         } catch (e) {
+           // Only demo mode falls back to a made-up trip; with a real server show "Trip not found"
+           if (process.env.NEXT_PUBLIC_DEMO_MODE === 'false') throw e;
            console.log("Fetching ride failed, using demo data", e);
-           // Fallback to demo data
            data = getDemoRideData(id);
         }
         setRide(data);

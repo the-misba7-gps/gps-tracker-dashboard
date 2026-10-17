@@ -3,6 +3,7 @@
 import { ReactNode, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
+import { LiveAlerts } from './LiveAlerts';
 import { useUIStore } from '@/store';
 import { cn } from '@/lib/utils';
 
@@ -34,6 +35,7 @@ export function MainLayout({ children }: MainLayoutProps) {
           {children}
         </main>
       </div>
+      <LiveAlerts />
     </div>
   );
 }

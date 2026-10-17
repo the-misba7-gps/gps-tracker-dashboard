@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils';
 import { useUIStore, useAuthStore } from '@/store';
 
 const navigation = [
-  { name: 'Dashboard', href: '/', icon: HomeIcon, roles: ['ADMIN', 'FLEET_MANAGER', 'OWNER'] },
+  { name: 'Dashboard', href: '/dashboard', icon: HomeIcon, roles: ['ADMIN', 'FLEET_MANAGER', 'OWNER'] },
   { name: 'Live Tracking', href: '/tracking', icon: MapIcon, roles: ['ADMIN', 'FLEET_MANAGER', 'DRIVER', 'OWNER'] },
   { name: 'Devices', href: '/devices', icon: TruckIcon, roles: ['ADMIN', 'FLEET_MANAGER', 'OWNER'] },
   { name: 'Trip History', href: '/trips', icon: ClockIcon, roles: ['ADMIN', 'FLEET_MANAGER', 'DRIVER', 'OWNER'] },

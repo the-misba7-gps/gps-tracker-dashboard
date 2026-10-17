@@ -13,6 +13,7 @@ export function useDevices(filter?: DeviceFilter) {
     setDevices, 
     setSelectedDevice, 
     updatePositions,
+    setOnline,
     setLoading 
   } = useDeviceStore();
   
@@ -39,9 +40,16 @@ export function useDevices(filter?: DeviceFilter) {
       unsubscribeRef.current();
     }
     
-    unsubscribeRef.current = realtimeApi.subscribeToPositions((positions) => {
+    const stopPositions = realtimeApi.subscribeToPositions((positions) => {
       updatePositions(positions);
     });
+    const stopStatus = realtimeApi.subscribeToDeviceStatus((online) => {
+      setOnline(online);
+    });
+    unsubscribeRef.current = () => {
+      stopPositions();
+      stopStatus();
+    };
 
     return () => {
       if (unsubscribeRef.current) {
@@ -49,7 +57,7 @@ export function useDevices(filter?: DeviceFilter) {
         unsubscribeRef.current = null;
       }
     };
-  }, [updatePositions]);
+  }, [updatePositions, setOnline]);
 
   useEffect(() => {
     fetchDevices();

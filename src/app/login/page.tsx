@@ -7,15 +7,29 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAuthStore } from '@/store';
 import { SignalIcon, EnvelopeIcon, LockClosedIcon, UserIcon, TruckIcon, MapPinIcon, HomeModernIcon } from '@heroicons/react/24/outline';
 
+// Demo buttons sign in with fake users; with a Traccar server only real accounts work
+const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE !== 'false';
+
 export default function LoginPage() {
   const { login, isLoading } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    login();
+    setError('');
+    setSubmitting(true);
+    try {
+      await login(email, password);
+    } catch {
+      setError('Invalid email or password');
+      setPassword('');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleDemoLogin = (role: 'ADMIN' | 'FLEET_MANAGER' | 'DRIVER' | 'OWNER') => {
@@ -67,7 +81,7 @@ export default function LoginPage() {
     };
     
     useAuthStore.getState().setUser(mockUser as any); 
-    router.push('/');
+    router.push(role === 'DRIVER' ? '/tracking' : '/dashboard');
   };
 
   return (
@@ -130,10 +144,23 @@ export default function LoginPage() {
               </a>
             </div>
 
-            <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5" isLoading={isLoading}>
+            {error && (
+              <p className="text-sm text-red-600 dark:text-red-400" role="alert">
+                {error}
+              </p>
+            )}
+
+            <Button
+              type="submit"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5"
+              isLoading={isLoading || submitting}
+              disabled={!isDemoMode && (!email || !password)}
+            >
               Sign In
             </Button>
 
+            {isDemoMode && (
+            <>
             <div className="relative my-8">
               <div className="absolute inset-0 flex items-center">
                 <div className="w-full border-t border-slate-200 dark:border-slate-700" />
@@ -206,6 +233,8 @@ export default function LoginPage() {
                 </div>
               </Button>
             </div>
+            </>
+            )}
           </form>
         </Card>
 
